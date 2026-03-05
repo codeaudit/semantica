@@ -146,7 +146,7 @@ class PipelineBuilder:
         self.steps.append(step)
         self.logger.debug(f"Added step: {step_name} ({step_type}) | Delta Mode: {delta_mode}")
 
-        return self
+        return step
 
     def connect_steps(
         self, from_step: str, to_step: str, **options
