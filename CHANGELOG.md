@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **0.3.0 Bug Fixes & Comprehensive Real-World Tests** (by @KaifAhmad1):
+  - Fixed `ProvenanceTracker` missing from `semantica/kg/__init__.py` exports — `from semantica.kg import ProvenanceTracker` now works correctly
+  - Fixed duplicate relation creation in `_parse_relation_result` — orphaned legacy block was appending every relation twice; removed the duplicate block
+  - Added `extraction_method` parameter to `_parse_relation_result`; typed extraction path now correctly sets `"llm_typed"` instead of `"llm"` in relation metadata
+  - Fixed cross-test cache pollution in `tests/semantic_extract/test_retry_logic.py` — module-level `_result_cache` now cleared in `setUp()` to prevent intermittent failures when tests share input text
+  - Added `tests/test_030_realworld_comprehensive.py`: 85 real-world tests covering all 0.3.0-alpha/beta features with real data (tech companies, CEOs, products, investment chains, healthcare scenarios)
+    - ContextGraph basic operations and decision tracking lifecycle
+    - KG algorithms: centrality, community detection, embeddings, path finding, similarity, link prediction, connectivity
+    - PolicyEngine, DecisionQuery, AgentContext, Decision model serialization
+    - ProvenanceTracker with GraphBuilderWithProvenance and AlgorithmTrackerWithProvenance
+    - Deduplication v2 with blocking strategies, RDF/TTL export, Reasoner inference
+    - Pipeline builder/validator/failure handler with retry policies
+    - Multi-hop investment chain (Microsoft→OpenAI, Google→Anthropic) end-to-end
+    - Healthcare entity extraction and knowledge graph construction E2E
+
 ## [0.3.0-beta] - 2026-03-07
 
 - **Multi-Founder LLM Extraction & Reasoner Inference Fix** (PR #354 by @KaifAhmad1):
