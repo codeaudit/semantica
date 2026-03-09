@@ -152,9 +152,10 @@ class ChangeLogAnalyzer:
     STRUCTURAL_FIELDS = {'subclasses', 'superclasses', 'equivalent_to', 'disjoint_with'}
     
     def __init__(self):
-        self.report = ImpactReport()
+        pass
     
     def analyze(self, diff: Dict[str, Any]) -> ImpactReport:
+        self.report = ImpactReport()
         if not diff:
             self.report.summary = {"error": "Empty diff provided"}
             return self.report

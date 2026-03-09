@@ -90,9 +90,11 @@ class OntologyEngine:
             base_id: Version ID of the old ontology
             target_id: Version ID of the new ontology
             **options: Can pass 'base_dict' and 'target_dict' directly to bypass loading.
+                       Can pass 'run_validation=True' to validate schema.
+                       Can pass 'graph_data' to validate instances against new schema.
             
         Returns:
-             A structured ImpactReport dictionary containing breaking/safe changes.
+             A structured dictionary containing the impact report and machine-readable diff.
         """
         
         tracking_id = self.progress.start_tracking(
@@ -104,22 +106,46 @@ class OntologyEngine:
         try:
             from ..change_management.change_log import generate_change_report
             
-            base_dict = options.get("base_dict") or self.get_ontology_version_dict(base_id)
-            target_dict = options.get("target_dict") or self.get_ontology_version_dict(target_id)
+    
+            base_dict = options["base_dict"] if "base_dict" in options else self.get_ontology_version_dict(base_id)
+            target_dict = options["target_dict"] if "target_dict" in options else self.get_ontology_version_dict(target_id)
             
             diff_result = self.version_manager.diff_ontologies(base_dict, target_dict)
-            
             report = generate_change_report(diff_result)
+            
+            report["diff"] = diff_result
             
             if options.get("run_validation"):
                 self.progress.update_tracking(tracking_id, message="Running validation on target schema...")
                 
-                validation_results = self.validate(target_dict, **options)
+        
+                val_res = self.validate(target_dict, **options)
+                report["validation_results"] = {
+                    "valid": getattr(val_res, "valid", getattr(val_res, "is_valid", False)),
+                    "consistent": getattr(val_res, "consistent", True),
+                    "satisfiable": getattr(val_res, "satisfiable", True),
+                    "errors": getattr(val_res, "errors", []),
+                    "warnings": getattr(val_res, "warnings", [])
+                }
                 
-                report["validation_results"] = validation_results
+    
+                if "graph_data" in options:
+                    try:
+                        from ..kg.graph_validator import GraphValidator
+                        kg_validator = GraphValidator(**self.config)
+                        
+                        self.progress.update_tracking(tracking_id, message="Running graph data validation...")
+                        kg_res = kg_validator.validate(options["graph_data"], ontology=target_dict, **options)
+                        
+                        report["graph_validation"] = {
+                            "valid": getattr(kg_res, "valid", getattr(kg_res, "is_valid", False)),
+                            "errors": getattr(kg_res, "errors", []),
+                            "warnings": getattr(kg_res, "warnings", [])
+                        }
+                    except ImportError:
+                        self.logger.warning("GraphValidator module not found, skipping KG validation.")
             
             self.progress.stop_tracking(tracking_id, status="completed", message="Comparison complete")
-            
             return report
         
         except Exception as e:

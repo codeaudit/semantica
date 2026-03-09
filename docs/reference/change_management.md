@@ -416,3 +416,54 @@ report = engine.compare_versions(
 
 print(f"Total changes detected: {report['summary']['total_changes']}")
 ```
+---
+
+### Understanding the Report Format
+
+The `compare_versions` method returns a comprehensive dictionary containing both a machine-readable diff and a human-readable impact analysis. 
+
+
+
+Here is the exact structure of the returned report:
+
+```json
+{
+  "summary": {
+    "total_changes": 12
+  },
+  "impact_classification": {
+    "breaking": [
+      {
+        "entity_uri": "[http://example.org/Person](http://example.org/Person)",
+        "severity": "critical",
+        "description": "Class Person removed.",
+        "mitigation": "Migrate orphaned instances."
+      }
+    ],
+    "potentially_breaking": [],
+    "safe": []
+  },
+  "recommendations": [
+    "✘✘✘ BREAKING: Schedule downtime or validate existing data."
+  ],
+  "diff": {
+    "added_classes": [],
+    "removed_classes": [],
+    "changed_classes": [],
+    "added_properties": [],
+    "removed_properties": [],
+    "changed_properties": []
+  },
+  "validation_results": {
+    "valid": true,
+    "consistent": true,
+    "satisfiable": true,
+    "errors": [],
+    "warnings": []
+  },
+  "graph_validation": {
+    "valid": false,
+    "errors": ["Instance data violates new domain constraint"],
+    "warnings": []
+  }
+}

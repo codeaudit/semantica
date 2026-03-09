@@ -304,15 +304,19 @@ class VersionManager:
     
             base_map = {}
             for item in base_list:
-                if isinstance(item, dict) and (item.get("uri") or item.get("name")):
-                    base_map[item.get("uri", item.get("name"))] = item
+                if isinstance(item, dict):
+                    key = item.get("uri") or item.get("name")
+                    if key:
+                        base_map[key] = item
                 elif isinstance(item, str):
                     base_map[item] = {"uri": item}
 
             target_map = {}
             for item in target_list:
-                if isinstance(item, dict) and (item.get("uri") or item.get("name")):
-                    target_map[item.get("uri", item.get("name"))] = item
+                if isinstance(item, dict):
+                    key = item.get("uri") or item.get("name")
+                    if key:
+                        target_map[key] = item
                 elif isinstance(item, str):
                     target_map[item] = {"uri": item}
             
@@ -343,8 +347,8 @@ class VersionManager:
                     
                     if changes:
                         changed.append({
-                            "uri": t_item.get("uri", key),
-                            "name": t_item.get("name", key),
+                            "uri": t_item.get("uri") or key,
+                            "name": t_item.get("name") or key,
                             "changes": changes
                         })
                         
