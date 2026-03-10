@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-10
+
 - **0.3.0 Bug Fixes & Comprehensive Real-World Tests** (by @KaifAhmad1):
   - Fixed `ProvenanceTracker` missing from `semantica/kg/__init__.py` exports — `from semantica.kg import ProvenanceTracker` now works correctly
   - Fixed duplicate relation creation in `_parse_relation_result` — orphaned legacy block was appending every relation twice; removed the duplicate block
