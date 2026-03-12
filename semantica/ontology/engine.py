@@ -72,6 +72,12 @@ class OntologyEngine:
         if not self.store:
             raise ProcessingError("TripletStore instance not configured in OntologyEngine.")
 
+        if not predicate.startswith(("http://", "https://")):
+            raise ProcessingError(
+                f"predicate must be a full URI (e.g. 'http://www.w3.org/2002/07/owl#equivalentClass'), "
+                f"not a CURIE: '{predicate}'"
+            )
+
         tracking_id = self.progress.start_tracking(
             module="ontology",
             submodule="OntologyEngine",
@@ -109,13 +115,14 @@ class OntologyEngine:
                 <http://www.w3.org/2004/02/skos/core#exactMatch>,
                 <http://www.w3.org/2004/02/skos/core#closeMatch>,
                 <http://www.w3.org/2004/02/skos/core#broadMatch>,
-                <http://www.w3.org/2004/02/skos/core#narrowMatch>
+                <http://www.w3.org/2004/02/skos/core#narrowMatch>,
+                <http://www.w3.org/2004/02/skos/core#relatedMatch>
             ))
         }}
         """
         try:
             results = self.store.execute_query(query, **options)
-            
+
             alignments = []
             if hasattr(results, 'bindings'):
                 for b in results.bindings:
@@ -138,8 +145,14 @@ class OntologyEngine:
 
         filter_clause = ""
         if ontology_uri:
-            # Sanitize double quotes to prevent breaking out of the STRSTARTS string literal
-            safe_ontology_uri = ontology_uri.replace('"', '%22')
+            # Sanitize characters that could break out of the SPARQL string literal or WHERE block
+            safe_ontology_uri = (
+                ontology_uri
+                .replace("\\", "%5C")
+                .replace('"', '%22')
+                .replace("{", "%7B")
+                .replace("}", "%7D")
+            )
             filter_clause = f'FILTER(STRSTARTS(STR(?s), "{safe_ontology_uri}") || STRSTARTS(STR(?o), "{safe_ontology_uri}"))'
 
         query = f"""
@@ -152,7 +165,8 @@ class OntologyEngine:
                 <http://www.w3.org/2004/02/skos/core#exactMatch>,
                 <http://www.w3.org/2004/02/skos/core#closeMatch>,
                 <http://www.w3.org/2004/02/skos/core#broadMatch>,
-                <http://www.w3.org/2004/02/skos/core#narrowMatch>
+                <http://www.w3.org/2004/02/skos/core#narrowMatch>,
+                <http://www.w3.org/2004/02/skos/core#relatedMatch>
             ))
             {filter_clause}
         }}

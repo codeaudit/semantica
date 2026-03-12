@@ -305,11 +305,12 @@ class QueryEngine:
                 <http://www.w3.org/2004/02/skos/core#exactMatch>,
                 <http://www.w3.org/2004/02/skos/core#closeMatch>,
                 <http://www.w3.org/2004/02/skos/core#broadMatch>,
-                <http://www.w3.org/2004/02/skos/core#narrowMatch>
+                <http://www.w3.org/2004/02/skos/core#narrowMatch>,
+                <http://www.w3.org/2004/02/skos/core#relatedMatch>
             ))
         }}
         """
-        
+
         expanded_uris = set([entity_uri])
         try:
             if hasattr(store_backend, "execute_sparql"):
@@ -319,17 +320,19 @@ class QueryEngine:
                     uri = val.get("value") if isinstance(val, dict) else val
                     if uri:
                         expanded_uris.add(uri)
-            
+            else:
+                self.logger.warning(
+                    "store_backend does not support execute_sparql; returning original URI only"
+                )
             self.progress_tracker.stop_tracking(
-                tracking_id, 
-                status="completed", 
+                tracking_id,
+                status="completed",
                 message=f"Expanded to {len(expanded_uris)} URIs"
             )
         except Exception as e:
             self.logger.error(f"Failed to expand alignments for {entity_uri}: {e}")
             self.progress_tracker.stop_tracking(tracking_id, status="failed", message=str(e))
-            # Fallback to returning just the original URI if the expansion query fails
-        
+
         return list(expanded_uris)
 
     def build_values_clause(self, variable_name: str, uris: List[str]) -> str:
@@ -344,7 +347,7 @@ class QueryEngine:
         """
         if not uris:
             return ""
-        formatted_uris = " ".join([f"<{uri}>" for uri in uris])
+        formatted_uris = " ".join([f"<{self._sanitize_uri(uri)}>" for uri in uris])
         return f"VALUES ?{variable_name} {{ {formatted_uris} }}"
 
     def _validate_query(self, query: str) -> bool:
