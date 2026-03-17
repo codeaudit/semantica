@@ -225,7 +225,7 @@ class PPTXParser:
             images=images,
         )
 
-    def _extract_metadata(self, prs: Presentation) -> Dict[str, Any]:
+    def _extract_metadata(self, prs: Any) -> Dict[str, Any]:
         """Extract presentation metadata."""
         metadata = {}
 
