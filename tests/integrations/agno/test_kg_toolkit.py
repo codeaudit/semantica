@@ -85,27 +85,32 @@ class _FakeReasoner:
 
 
 class _FakeGraph:
+    """Fake ContextGraph whose signatures match the real ContextGraph API."""
+
     def __init__(self):
-        self._nodes = {}
-        self._edges = []
+        self._node_store: dict = {}   # node_id -> {"node_id": ..., "node_type": ...}
+        self._edge_store: list = []
 
-    def find_nodes(self, label=None):
-        node = MagicMock()
-        node.label = label or "SomeNode"
-        node.node_type = "Entity"
-        node.id = "n1"
-        return [node]
+    # ContextGraph.find_nodes(node_type=None) -> List[Dict]
+    def find_nodes(self, node_type=None):
+        nodes = list(self._node_store.values())
+        if node_type:
+            nodes = [n for n in nodes if n.get("node_type") == node_type]
+        return nodes
 
-    def add_node(self, label, node_type="Entity"):
-        self._nodes[label] = MagicMock(label=label, node_type=node_type)
+    # ContextGraph.add_node(node_id, node_type, content=None, **props) -> bool
+    def add_node(self, node_id, node_type="Entity", content=None, **props):
+        self._node_store[node_id] = {"node_id": node_id, "node_type": node_type}
+        return True
 
-    def add_edge(self, src, tgt, edge_type="RELATED_TO"):
-        self._edges.append((src, tgt, edge_type))
+    # ContextGraph.add_edge(source_id, target_id, edge_type, **props) -> bool
+    def add_edge(self, source_id, target_id, edge_type="related_to", **props):
+        self._edge_store.append((source_id, target_id, edge_type))
+        return True
 
-    def get_neighbours(self, entity):
-        n = MagicMock()
-        n.label = f"Neighbour_of_{entity}"
-        return [n]
+    # ContextGraph.get_neighbors(node_id, hops=1, ...) -> List[Dict]
+    def get_neighbors(self, node_id, hops=1, relationship_types=None, min_weight=0.0):
+        return [{"node_id": f"Neighbour_of_{node_id}", "node_type": "Entity"}]
 
 
 class TestAgnoKGToolkitInit(unittest.TestCase):

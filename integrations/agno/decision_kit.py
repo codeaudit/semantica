@@ -33,6 +33,7 @@ get_decision_summary — Summarise decision history by category
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from semantica.utils.logging import get_logger
@@ -308,14 +309,21 @@ class AgnoDecisionKit(_ToolkitBase):  # type: ignore[misc]
         """
         Validate a proposed decision against policy rules.
 
+        Rules are evaluated inline using simple comparison expressions.  This
+        avoids misuse of ``PolicyEngine.check_compliance`` (which requires a
+        stored ``Decision`` + ``policy_id``) and ensures exceptions never
+        silently return ``compliant=True``.
+
         Parameters
         ----------
         decision_data:
             JSON string describing the decision (must include ``category``,
             ``outcome``, ``confidence`` keys at minimum).
         policy_rules:
-            JSON list of policy rule strings, e.g.
+            JSON list of rule strings, e.g.
             ``'["confidence >= 0.7", "category != \\"test\\""]'``.
+            Each rule is a simple comparison: ``<field> <op> <value>``
+            where op is one of ``>=``, ``<=``, ``!=``, ``==``, ``>``, ``<``.
 
         Returns
         -------
@@ -325,7 +333,13 @@ class AgnoDecisionKit(_ToolkitBase):  # type: ignore[misc]
         try:
             data = json.loads(decision_data) if isinstance(decision_data, str) else decision_data
         except json.JSONDecodeError as exc:
-            return json.dumps({"error": f"Invalid decision_data JSON: {exc}"})
+            return json.dumps(
+                {
+                    "compliant": False,
+                    "violations": [f"Invalid decision_data JSON: {exc}"],
+                    "warnings": [],
+                }
+            )
 
         rules: List[str] = []
         if policy_rules:
@@ -334,21 +348,48 @@ class AgnoDecisionKit(_ToolkitBase):  # type: ignore[misc]
             except json.JSONDecodeError:
                 rules = [r.strip() for r in policy_rules.split(",") if r.strip()]
 
-        try:
-            from semantica.context import PolicyEngine  # lazy import
+        violations: List[str] = []
+        warnings: List[str] = []
 
-            engine = PolicyEngine(graph_store=self._ctx.knowledge_graph)  # type: ignore[attr-defined]
-            result = engine.check_compliance(data, rules)
-            return json.dumps(
-                {
-                    "compliant": getattr(result, "compliant", True),
-                    "violations": getattr(result, "violations", []),
-                    "warnings": getattr(result, "warnings", []),
-                }
-            )
-        except Exception as exc:
-            logger.warning("check_policy failed: %s", exc)
-            return json.dumps({"compliant": True, "violations": [], "warnings": [], "note": str(exc)})
+        for rule in rules:
+            try:
+                if not self._eval_rule(rule, data):
+                    violations.append(f"Rule violated: {rule}")
+            except Exception as exc:
+                warnings.append(f"Could not evaluate rule '{rule}': {exc}")
+
+        compliant = len(violations) == 0
+        logger.debug("check_policy: compliant=%s, violations=%d", compliant, len(violations))
+        return json.dumps(
+            {
+                "compliant": compliant,
+                "violations": violations,
+                "warnings": warnings,
+            }
+        )
+
+    def _eval_rule(self, rule: str, data: Dict[str, Any]) -> bool:
+        """Evaluate a simple comparison rule (``field op value``) against data."""
+        m = re.match(r"(\w+)\s*(>=|<=|!=|==|>|<)\s*(.+)", rule.strip())
+        if not m:
+            return True  # unrecognised format — pass through
+        field, op, val_str = m.group(1), m.group(2), m.group(3).strip().strip("\"'")
+        actual = data.get(field)
+        if actual is None:
+            return True  # field absent — cannot evaluate
+        try:
+            val: Any = type(actual)(val_str)
+        except (ValueError, TypeError):
+            val = val_str
+        ops = {
+            ">=": lambda a, b: a >= b,
+            "<=": lambda a, b: a <= b,
+            "!=": lambda a, b: a != b,
+            "==": lambda a, b: a == b,
+            ">": lambda a, b: a > b,
+            "<": lambda a, b: a < b,
+        }
+        return ops[op](actual, val)
 
     def get_decision_summary(
         self,

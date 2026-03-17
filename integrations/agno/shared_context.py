@@ -58,14 +58,17 @@ class _AgentScopedStore(AgnoContextStore):
 
     def __init__(self, shared: "AgnoSharedContext", role: str) -> None:
         # Re-use the parent's context rather than creating a new one.
-        # We skip the normal __init__ and wire directly.
+        # We skip the normal __init__ and wire all required parent attributes
+        # directly so that inherited methods (record_decision, find_precedents,
+        # retrieve, get_context_for_prompt) work correctly via self._context.
         self._role = role
         self._shared = shared
         self._memories: Dict[str, Any] = {}
         self.decision_tracking = shared.decision_tracking
         self.graph_expansion = shared.graph_expansion
         self.session_id = f"{shared.session_id}::{role}"
-        self._ctx = shared._context  # shared AgentContext
+        # Use the attribute name the parent class expects.
+        self._context = shared._context  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
     # Override upsert / record to tag with role
@@ -78,13 +81,13 @@ class _AgentScopedStore(AgnoContextStore):
         mem_text = getattr(memory, "memory", str(memory))
 
         try:
-            self._ctx.store(mem_text, conversation_id=self.session_id)
+            self._context.store(mem_text, conversation_id=self.session_id)
         except Exception as exc:
             logger.warning("[%s] store failed: %s", self._role, exc)
 
         if self.decision_tracking:
             try:
-                self._ctx.record_decision(
+                self._context.record_decision(
                     category=f"memory:{self._role}",
                     scenario=mem_text[:200],
                     reasoning=f"Stored by agent role='{self._role}'",
@@ -258,6 +261,7 @@ class AgnoSharedContext:
             return self._context.find_precedents_advanced(
                 scenario=scenario,
                 category=category,
+                limit=limit,
             )
         except Exception as exc:
             logger.warning("find_precedents failed: %s", exc)

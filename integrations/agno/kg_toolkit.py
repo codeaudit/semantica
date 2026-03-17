@@ -20,7 +20,7 @@ Tools exposed
 extract_entities   — Extract named entities from text
 extract_relations  — Extract relationships between entities
 add_to_graph       — Add entities / relations to the context graph
-query_graph        — Query the graph (natural-language or Cypher)
+query_graph        — Query the graph (natural-language keyword or Cypher)
 find_related       — Find concepts related to a given entity
 infer_facts        — Apply rules to infer new facts from the graph
 export_subgraph    — Export a subgraph as JSON-LD / RDF Turtle
@@ -235,7 +235,8 @@ class AgnoKGToolkit(_ToolkitBase):  # type: ignore[misc]
                     name = ent.get("name", str(ent))
                     ntype = ent.get("type", "Entity")
                     try:
-                        self._graph.add_node(label=name, node_type=ntype)  # type: ignore[attr-defined]
+                        # ContextGraph.add_node(node_id, node_type, content=None, **props)
+                        self._graph.add_node(node_id=name, node_type=ntype)  # type: ignore[attr-defined]
                         nodes_added += 1
                     except Exception:
                         pass
@@ -248,9 +249,10 @@ class AgnoKGToolkit(_ToolkitBase):  # type: ignore[misc]
                 for rel in rel_list:
                     src = rel.get("source", "")
                     tgt = rel.get("target", "")
-                    rel_type = rel.get("relation", "RELATED_TO")
+                    rel_type = rel.get("relation", "related_to")
                     try:
-                        self._graph.add_edge(src, tgt, edge_type=rel_type)  # type: ignore[attr-defined]
+                        # ContextGraph.add_edge(source_id, target_id, edge_type, **props)
+                        self._graph.add_edge(source_id=src, target_id=tgt, edge_type=rel_type)  # type: ignore[attr-defined]
                         edges_added += 1
                     except Exception:
                         pass
@@ -264,9 +266,10 @@ class AgnoKGToolkit(_ToolkitBase):  # type: ignore[misc]
         """
         Query the context graph in natural language or Cypher.
 
-        For natural-language queries a keyword-based node lookup is performed.
-        Pass a string starting with ``"MATCH"`` for raw Cypher execution
-        (requires a Neo4j / FalkorDB backend).
+        For natural-language queries all nodes are retrieved and filtered by
+        whether ``query`` appears in their ``node_id``.  Pass a string starting
+        with ``"MATCH"`` for raw Cypher execution (requires a Neo4j / FalkorDB
+        backend).
 
         Parameters
         ----------
@@ -286,18 +289,26 @@ class AgnoKGToolkit(_ToolkitBase):  # type: ignore[misc]
                     records = result if isinstance(result, list) else [str(result)]
                     return json.dumps({"results": records, "query_type": "cypher"})
                 except AttributeError:
-                    return json.dumps({"error": "Cypher queries require a Neo4j/FalkorDB backend", "query_type": "cypher"})
+                    return json.dumps(
+                        {
+                            "error": "Cypher queries require a Neo4j/FalkorDB backend",
+                            "query_type": "cypher",
+                        }
+                    )
             else:
-                # Natural-language keyword lookup
-                nodes = self._graph.find_nodes(label=query)  # type: ignore[attr-defined]
-                out = [
-                    {
-                        "label": getattr(n, "label", str(n)),
-                        "type": getattr(n, "node_type", ""),
-                        "id": getattr(n, "id", ""),
-                    }
-                    for n in (nodes or [])
-                ]
+                # Natural-language keyword lookup — ContextGraph.find_nodes() → List[Dict]
+                all_nodes = self._graph.find_nodes()  # type: ignore[attr-defined]
+                q_lower = query.lower()
+                out = []
+                for n in (all_nodes or []):
+                    if isinstance(n, dict):
+                        node_id = n.get("node_id", "")
+                        node_type = n.get("node_type", "")
+                    else:
+                        node_id = getattr(n, "id", getattr(n, "label", str(n)))
+                        node_type = getattr(n, "node_type", "")
+                    if q_lower in node_id.lower() or q_lower in node_type.lower():
+                        out.append({"label": node_id, "type": node_type, "id": node_id})
                 return json.dumps({"results": out, "count": len(out), "query_type": "keyword"})
         except Exception as exc:
             logger.warning("query_graph failed: %s", exc)
@@ -328,10 +339,14 @@ class AgnoKGToolkit(_ToolkitBase):  # type: ignore[misc]
                 next_frontier: List[str] = []
                 for e in frontier:
                     try:
-                        neighbours = self._graph.get_neighbours(e)  # type: ignore[attr-defined]
+                        # ContextGraph.get_neighbors(node_id, hops=1, ...) → List[Dict]
+                        neighbours = self._graph.get_neighbors(node_id=e, hops=1)  # type: ignore[attr-defined]
                         for n in (neighbours or []):
-                            label = getattr(n, "label", str(n))
-                            if label not in visited:
+                            if isinstance(n, dict):
+                                label = n.get("node_id", "")
+                            else:
+                                label = getattr(n, "label", str(n))
+                            if label and label not in visited:
                                 visited.add(label)
                                 next_frontier.append(label)
                                 related.append(label)
@@ -376,13 +391,18 @@ class AgnoKGToolkit(_ToolkitBase):  # type: ignore[misc]
                 fact_list = [f.strip() for f in facts.split(",") if f.strip()]
 
         if not fact_list:
-            # Derive facts from graph nodes
+            # Derive facts from graph nodes via the public API
             try:
-                nodes = getattr(self._graph, "_nodes", {})
-                for nid, node in list(nodes.items())[:50]:
-                    label = getattr(node, "label", str(nid))
-                    ntype = getattr(node, "node_type", "Entity")
-                    fact_list.append(f"{ntype}({label})")
+                all_nodes = self._graph.find_nodes()  # type: ignore[attr-defined]
+                for node in (all_nodes or [])[:50]:
+                    if isinstance(node, dict):
+                        label = node.get("node_id", "")
+                        ntype = node.get("node_type", "Entity")
+                    else:
+                        label = getattr(node, "label", str(node))
+                        ntype = getattr(node, "node_type", "Entity")
+                    if label:
+                        fact_list.append(f"{ntype}({label})")
             except Exception:
                 pass
 
@@ -422,17 +442,24 @@ class AgnoKGToolkit(_ToolkitBase):  # type: ignore[misc]
             from semantica.export import RDFExporter  # lazy import
 
             exporter = RDFExporter()
-            rdf_format = {"ttl": "turtle", "json-ld": "json-ld", "xml": "xml", "nt": "nt"}.get(format, format)
+            rdf_format = {"ttl": "turtle", "json-ld": "json-ld", "xml": "xml", "nt": "nt"}.get(
+                format, format
+            )
             output = exporter.export_to_rdf(self._graph, format=rdf_format)  # type: ignore[arg-type]
             return json.dumps({"format": rdf_format, "data": output})
         except Exception as exc:
             logger.warning("export_subgraph failed: %s", exc)
-            # Fallback: return graph as plain JSON
+            # Fallback: return graph nodes via the public API
             try:
-                nodes = [
-                    {"id": getattr(n, "id", k), "label": getattr(n, "label", k)}
-                    for k, n in getattr(self._graph, "_nodes", {}).items()
-                ]
+                all_nodes = self._graph.find_nodes()  # type: ignore[attr-defined]
+                nodes = []
+                for n in (all_nodes or []):
+                    if isinstance(n, dict):
+                        nodes.append({"id": n.get("node_id", ""), "label": n.get("node_id", "")})
+                    else:
+                        nodes.append(
+                            {"id": getattr(n, "id", ""), "label": getattr(n, "label", "")}
+                        )
                 return json.dumps({"format": "json", "nodes": nodes, "note": str(exc)})
             except Exception:
                 return json.dumps({"format": format, "data": "", "error": str(exc)})

@@ -213,7 +213,7 @@ semantica-worker = "semantica.worker:main"
 # ---------------- TOOLING ----------------
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["semantica*"]
+include = ["semantica*", "integrations*"]
 
 [tool.black]
 line-length = 88

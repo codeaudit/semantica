@@ -7,10 +7,13 @@ sessions.
 
 Key behaviours
 --------------
-- ``upsert_memory()``  → stores text in ``AgentContext`` (vector index + graph node)
-- ``read_memories()``  → hybrid retrieval: vector similarity + graph hop expansion
+- ``upsert_memory()``  → stores text in ``AgentContext`` (vector + graph) and
+                          extracts entities into the knowledge graph
+- ``read_memories()``  → hybrid retrieval: vector similarity + graph expansion
+- ``delete_memory()``  → removes from cache and calls ``AgentContext.forget()``
 - ``record_decision()`` → records a structured decision with reasoning & outcome
 - ``find_precedents()`` → returns semantically similar historical decisions
+- ``get_context_for_prompt()`` → formats precedents for system-prompt injection
 
 Install
 -------
@@ -200,8 +203,9 @@ class AgnoContextStore(_MemoryDbBase):  # type: ignore[misc]
         """
         Persist ``memory`` into both the vector store and the context graph.
 
-        If ``decision_tracking`` is enabled a lightweight decision entry is
-        also recorded so the memory participates in precedent search.
+        Entity extraction is performed so the knowledge graph is populated
+        with nodes for the stored content.  If ``decision_tracking`` is enabled
+        a lightweight decision entry is also recorded.
         """
         mem_id = getattr(memory, "id", None) or str(uuid.uuid4())
         mem_text = getattr(memory, "memory", str(memory))
@@ -215,6 +219,23 @@ class AgnoContextStore(_MemoryDbBase):  # type: ignore[misc]
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("AgentContext.store() failed: %s", exc)
+
+        # Extract entities and index them into the knowledge graph
+        try:
+            from semantica.semantic_extract import NERExtractor
+            ner = NERExtractor()
+            entities = ner.extract_entities(mem_text) or []
+            kg = getattr(self._context, "knowledge_graph", None)
+            if kg is not None:
+                for ent in entities:
+                    name = getattr(ent, "name", str(ent))
+                    ntype = getattr(ent, "type", "Entity")
+                    try:
+                        kg.add_node(node_id=name, node_type=ntype)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.debug("NER/graph indexing skipped: %s", exc)
 
         # Optional decision tracking
         if self.decision_tracking:
@@ -238,14 +259,26 @@ class AgnoContextStore(_MemoryDbBase):  # type: ignore[misc]
 
     def delete_memory(self, id: str) -> None:
         self._memories.pop(id, None)
+        try:
+            self._context.forget(memory_id=id)
+        except Exception as exc:
+            logger.debug("forget(%s) failed: %s", id, exc)
         logger.debug("delete_memory id=%s", id)
 
     def drop_table(self) -> None:
         self._memories.clear()
+        try:
+            self._context.forget()
+        except Exception as exc:
+            logger.debug("drop_table forget() failed: %s", exc)
         logger.debug("AgnoContextStore: all memories dropped")
 
     def clear(self) -> bool:
         self._memories.clear()
+        try:
+            self._context.forget()
+        except Exception as exc:
+            logger.debug("clear forget() failed: %s", exc)
         return True
 
     # ------------------------------------------------------------------
@@ -282,6 +315,7 @@ class AgnoContextStore(_MemoryDbBase):  # type: ignore[misc]
             return self._context.find_precedents_advanced(
                 scenario=scenario,
                 category=category,
+                limit=limit,
             )
         except Exception as exc:
             logger.warning("find_precedents failed: %s", exc)
@@ -290,10 +324,53 @@ class AgnoContextStore(_MemoryDbBase):  # type: ignore[misc]
     def retrieve(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Hybrid retrieval: vector similarity + optional graph expansion."""
         try:
-            return self._context.retrieve(query)
+            return self._context.retrieve(query, max_results=limit)
         except Exception as exc:
             logger.warning("retrieve failed: %s", exc)
             return []
+
+    def get_context_for_prompt(self, scenario: str, max_precedents: int = 3) -> str:
+        """
+        Return formatted precedents suitable for injection into a system prompt.
+
+        Call this before each LLM invocation to surface relevant past decisions
+        automatically.
+
+        Parameters
+        ----------
+        scenario:
+            Description of the current situation.
+        max_precedents:
+            Maximum number of precedents to include.
+
+        Returns
+        -------
+        str
+            Multi-line string ready to prepend to a system prompt, or an
+            empty string when no relevant precedents exist.
+        """
+        try:
+            precedents = self.find_precedents(scenario, limit=max_precedents)
+            if not precedents:
+                return ""
+            lines = ["Relevant past decisions:"]
+            for i, p in enumerate(precedents[:max_precedents], 1):
+                if isinstance(p, dict):
+                    sc = p.get("scenario", "")
+                    outcome = p.get("outcome", "")
+                    conf = p.get("confidence", "")
+                else:
+                    sc = getattr(p, "scenario", str(p))
+                    outcome = getattr(p, "outcome", "")
+                    conf = getattr(p, "confidence", "")
+                lines.append(
+                    f"{i}. Scenario: {sc} → Outcome: {outcome}"
+                    + (f" (confidence: {conf})" if conf != "" else "")
+                )
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.warning("get_context_for_prompt failed: %s", exc)
+            return ""
 
     @property
     def context(self) -> Any:

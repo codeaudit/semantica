@@ -113,6 +113,8 @@ class AgnoKnowledgeGraph(_KnowledgeBase):  # type: ignore[misc]
         Connection URI for the chosen graph store backend.
     num_documents:
         Default number of documents returned by ``search()``.
+    chunk_size:
+        Maximum characters per text chunk during ingestion.
     """
 
     def __init__(
@@ -124,25 +126,39 @@ class AgnoKnowledgeGraph(_KnowledgeBase):  # type: ignore[misc]
         graph_store_backend: str = "inmemory",
         graph_store_uri: Optional[str] = None,
         num_documents: int = 5,
+        chunk_size: int = 1000,
         **kwargs: Any,
     ) -> None:
         if AGNO_AVAILABLE:
             super().__init__(**kwargs)  # type: ignore[call-arg]
 
         self.num_documents = num_documents
+        self.chunk_size = chunk_size
         self._graph_store_backend = graph_store_backend
 
         # Lazy imports to keep semantica core optional at import time
-        from semantica.context import ContextGraph
+        from semantica.context import AgentContext, ContextGraph
         from semantica.kg import GraphBuilder
         from semantica.semantic_extract import NERExtractor, RelationExtractor
+        from semantica.vector_store import VectorStore
 
         self._graph = context_graph or ContextGraph()
+
+        # Connect GraphBuilder to the ContextGraph so build() persists content.
         self._graph_builder = graph_builder or GraphBuilder()
+        self._graph_builder.graph_store = self._graph
+
         self._ner = ner_extractor or NERExtractor()
         self._rel = relation_extractor or RelationExtractor()
 
-        # In-process document store for search fallback
+        # Internal AgentContext for vector-based retrieval (shares same graph).
+        self._agent_context = AgentContext(
+            vector_store=VectorStore(backend="faiss"),
+            knowledge_graph=self._graph,
+            decision_tracking=False,
+        )
+
+        # In-process document store for keyword-search fallback
         self._docs: List[Dict[str, Any]] = []
 
         logger.info(
@@ -163,14 +179,39 @@ class AgnoKnowledgeGraph(_KnowledgeBase):  # type: ignore[misc]
         """
         Multi-hop GraphRAG search.
 
-        1. Vector retrieval over stored document texts.
+        1. Vector retrieval via ``AgentContext.retrieve()``.
         2. Graph hop expansion for entities found in top results.
         3. Returns a list of Agno ``Document`` objects.
+
+        Falls back to keyword scoring over the in-process ``_docs`` cache
+        when vector retrieval is unavailable.
         """
         k = num_documents or self.num_documents
         results: List[Any] = []
 
-        # Simple keyword / substring filter over in-process store
+        # Primary: vector similarity retrieval
+        try:
+            retrieved = self._agent_context.retrieve(query, max_results=k)
+            for item in retrieved:
+                if isinstance(item, dict):
+                    content = item.get("content", item.get("text", str(item)))
+                    entities = item.get("entities", [])
+                    meta = {k2: v for k2, v in item.items() if k2 not in ("content", "text")}
+                else:
+                    content = str(item)
+                    entities = []
+                    meta = {}
+                extra = self._graph_context_for(entities) if entities else ""
+                if extra:
+                    content = content + "\n\n[Graph context]\n" + extra
+                results.append(AgnoDocument(content=content, meta_data=meta))
+            if results:
+                logger.debug("search('%s') → %d documents (vector)", query, len(results))
+                return results
+        except Exception as exc:
+            logger.debug("Vector retrieval failed, using keyword fallback: %s", exc)
+
+        # Fallback: keyword / substring scoring over in-process cache
         q_lower = query.lower()
         scored = [
             (doc, sum(1 for w in q_lower.split() if w in doc["text"].lower()))
@@ -180,12 +221,10 @@ class AgnoKnowledgeGraph(_KnowledgeBase):  # type: ignore[misc]
         top = [d for d, _ in scored[:k]]
 
         for doc in top:
-            # Graph expansion: pull related entities from the context graph
             extra = self._graph_context_for(doc.get("entities", []))
             content = doc["text"]
             if extra:
                 content += "\n\n[Graph context]\n" + extra
-
             results.append(
                 AgnoDocument(
                     content=content,
@@ -195,7 +234,7 @@ class AgnoKnowledgeGraph(_KnowledgeBase):  # type: ignore[misc]
                 )
             )
 
-        logger.debug("search('%s') → %d documents", query, len(results))
+        logger.debug("search('%s') → %d documents (keyword)", query, len(results))
         return results
 
     def load(
@@ -236,10 +275,22 @@ class AgnoKnowledgeGraph(_KnowledgeBase):  # type: ignore[misc]
             self.load_urls(urls)
 
     def load_urls(self, urls: List[str]) -> None:
-        """Fetch each URL and ingest the response body."""
+        """Fetch each URL and ingest the response body.
+
+        Only ``http`` and ``https`` schemes are permitted to prevent SSRF.
+        """
         import urllib.request
+        from urllib.parse import urlparse
 
         for url in urls:
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https"):
+                logger.warning(
+                    "Skipping URL with disallowed scheme '%s': %s",
+                    parsed.scheme,
+                    url,
+                )
+                continue
             try:
                 with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
                     text = resp.read().decode("utf-8", errors="replace")
@@ -261,52 +312,125 @@ class AgnoKnowledgeGraph(_KnowledgeBase):  # type: ignore[misc]
             self._ingest_text(text, source=source)
 
     def get_graph_context(self, entity: str) -> str:
-        """Return a text summary of an entity's subgraph (neighbours + edges)."""
-        return self._graph_context_for([entity])
+        """
+        Return a structured text representation of an entity's subgraph
+        (neighbours and edge types), suitable for structured reasoning.
+
+        Parameters
+        ----------
+        entity:
+            Root entity name (must have been added to the graph).
+
+        Returns
+        -------
+        str
+            Multi-line text with nodes and labelled edge types.
+        """
+        lines = [f"Entity: {entity}"]
+        try:
+            neighbours = self._graph.get_neighbors(node_id=entity, hops=1)
+            for n in (neighbours or [])[:10]:
+                if isinstance(n, dict):
+                    node_id = n.get("node_id", "")
+                    ntype = n.get("node_type", "")
+                    edge_type = n.get("edge_type", "related_to")
+                    suffix = f" (type: {ntype})" if ntype else ""
+                    lines.append(f"  --[{edge_type}]--> {node_id}{suffix}")
+                else:
+                    lines.append(f"  --> {getattr(n, 'label', str(n))}")
+        except Exception:
+            pass
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _chunk_text(self, text: str) -> List[str]:
+        """Split text into chunks at paragraph boundaries."""
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        if not paragraphs:
+            return [text] if text.strip() else []
+
+        chunks: List[str] = []
+        current: List[str] = []
+        current_len = 0
+
+        for para in paragraphs:
+            if current_len + len(para) > self.chunk_size and current:
+                chunks.append("\n\n".join(current))
+                current = []
+                current_len = 0
+            current.append(para)
+            current_len += len(para)
+
+        if current:
+            chunks.append("\n\n".join(current))
+
+        return chunks or [text]
+
     def _ingest_text(self, text: str, source: str = "<text>") -> None:
         """Run the full extraction pipeline and store in graph + doc list."""
         import uuid
 
-        # NER
-        entities: List[str] = []
+        chunks = self._chunk_text(text)
+        all_entities: List[str] = []
+        all_relations: List[Any] = []
+
+        for chunk in chunks:
+            # NER
+            ner_result: List[Any] = []
+            try:
+                ner_result = self._ner.extract_entities(chunk) or []
+                chunk_entities = [getattr(e, "name", str(e)) for e in ner_result]
+                all_entities.extend(chunk_entities)
+            except Exception as exc:
+                logger.debug("NER failed for chunk in '%s': %s", source, exc)
+
+            # Relation extraction
+            try:
+                chunk_relations = self._rel.extract_relations(chunk, entities=ner_result) or []
+                all_relations.extend(chunk_relations)
+            except Exception as exc:
+                logger.debug("RelationExtractor failed for chunk in '%s': %s", source, exc)
+
+        # Graph build — graph_store is wired to self._graph in __init__
         try:
-            ner_result = self._ner.extract_entities(text)
-            entities = [
-                getattr(e, "name", str(e)) for e in (ner_result or [])
+            sources = [
+                {
+                    "text": text,
+                    "entities": all_entities,
+                    "relations": all_relations,
+                    "source": source,
+                }
             ]
-        except Exception as exc:
-            logger.debug("NER failed for '%s': %s", source, exc)
-
-        # Relation extraction
-        relations: List[Any] = []
-        try:
-            relations = self._rel.extract_relations(text, entities=ner_result)  # type: ignore[arg-type]
-        except Exception as exc:
-            logger.debug("RelationExtractor failed for '%s': %s", source, exc)
-
-        # Graph build
-        try:
-            sources = [{"text": text, "entities": entities, "relations": relations, "source": source}]
             self._graph_builder.build(sources)
         except Exception as exc:
             logger.debug("GraphBuilder.build() failed for '%s': %s", source, exc)
 
-        # Cache document for search
+        # Vector index for AgentContext.retrieve()
+        try:
+            self._agent_context.store(text, conversation_id=source)
+        except Exception as exc:
+            logger.debug("AgentContext.store() failed for '%s': %s", source, exc)
+
+        # Cache document for keyword-search fallback
         self._docs.append(
             {
                 "id": str(uuid.uuid4()),
                 "text": text,
                 "source": source,
-                "entities": entities,
+                "entities": all_entities,
                 "metadata": {"source": source},
             }
         )
-        logger.debug("Ingested '%s' — %d entities, %d relations", source, len(entities), len(relations))
+        logger.debug(
+            "Ingested '%s' — %d entities, %d relations, %d chunks",
+            source,
+            len(all_entities),
+            len(all_relations),
+            len(chunks),
+        )
 
     def _ingest_path(self, path: Path, recursive: bool = False) -> None:
         """Walk a file or directory and ingest all text files."""
@@ -334,11 +458,18 @@ class AgnoKnowledgeGraph(_KnowledgeBase):  # type: ignore[misc]
         lines: List[str] = []
         for entity in entities[:3]:  # limit to avoid context bloat
             try:
-                nodes = self._graph.find_nodes(label=entity)  # type: ignore[attr-defined]
-                for node in (nodes or [])[:3]:
-                    label = getattr(node, "label", entity)
-                    ntype = getattr(node, "node_type", "")
-                    lines.append(f"- {label} ({ntype})" if ntype else f"- {label}")
+                neighbours = self._graph.get_neighbors(node_id=entity, hops=1)
+                for n in (neighbours or [])[:3]:
+                    if isinstance(n, dict):
+                        node_id = n.get("node_id", "")
+                        ntype = n.get("node_type", "")
+                        edge_type = n.get("edge_type", "related_to")
+                        lines.append(
+                            f"- {entity} --[{edge_type}]--> {node_id}"
+                            + (f" ({ntype})" if ntype else "")
+                        )
+                    else:
+                        lines.append(f"- {entity} --> {getattr(n, 'label', str(n))}")
             except Exception:
                 pass
         return "\n".join(lines)
