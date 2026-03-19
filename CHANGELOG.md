@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Removed `import traceback` unused import in `app.py`
     - Deduplicated `_build_graph_dict` (was copied identically in `graph.py`, `analytics.py`, `export_import.py`) into `GraphSession.build_graph_dict()`
   - 49 integration tests in `tests/explorer/test_explorer_api.py` using `starlette.testclient.TestClient` — all passing; covers health, nodes, edges, search, stats, decisions, causal chains, precedents, compliance (including violation detection), temporal snapshots/diff/patterns, analytics, reasoning, entity extraction, link prediction, deduplication, annotations, export (JSON + node-subset), and import (JSON + edges + unsupported format)
+- **Reasoning Dead Code Removal** (PR #387, Issue #382 by @ZohaibHassan16):
+  - Removed lines 357–358 in `semantica/reasoning/reasoner.py` that silently overwrote the sophisticated `_match_pattern` regex (which handles pre-bound variable embedding, repeated-variable backreferences via `(?P=var)`, and non-greedy named capture groups) with a simpler `re.escape`-based pattern, making all the prior logic unreachable dead code
+  - Removed duplicate unreachable `return None` on line 368 (syntactically dead, appearing immediately after another `return None` in the same branch)
+  - Surfaced `re.error` exceptions instead of swallowing them with `except Exception: pass`, preventing silent failures when malformed patterns were passed to `re.match`
+  - Before this fix, any rule using the same variable twice (e.g. `rel(?x, ?x)`) generated a duplicate named group error that was silently caught, causing the match to return `None` regardless of the fact — breaking transitivity, symmetry, and self-join rule patterns entirely
 
 - **Agno Agentic Framework Integration** (Issue #249):
   - Added `AgnoContextStore` — graph-backed agent memory implementing the `agno.memory.db.base.MemoryDb` protocol; wraps `AgentContext` + `VectorStore`; supports `create()`, `table_exists()`, `memory_exists()`, `read_memories()`, `upsert_memory()`, `delete_memory()`, `drop_table()`, `clear()` plus extended `record_decision()`, `find_precedents()`, `retrieve()` methods
