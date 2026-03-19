@@ -43,6 +43,7 @@ async def get_analytics(
     """Compute graph analytics (centrality, community, connectivity)."""
     requested = set((metrics or "centrality,community,connectivity").split(","))
     graph_dict = await asyncio.to_thread(_build_graph_dict, session)
+    graph_dict = await asyncio.to_thread(session.build_graph_dict)
     result: dict = {}
 
     if "centrality" in requested and session.centrality is not None:
@@ -85,6 +86,7 @@ async def validate_graph(
         return ValidationReportResponse(valid=True, error_count=0, warning_count=0, issues=[])
 
     graph_dict = await asyncio.to_thread(_build_graph_dict, session)
+    graph_dict = await asyncio.to_thread(session.build_graph_dict)
 
     try:
         report = await asyncio.to_thread(validator.validate, graph_dict)

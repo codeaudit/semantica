@@ -6,6 +6,7 @@ current ``GraphSession`` and ``ConnectionManager`` into route handlers.
 """
 
 from fastapi import Request
+from fastapi import Request, HTTPException, status
 
 from .session import GraphSession
 from .ws import ConnectionManager
@@ -13,6 +14,11 @@ from .ws import ConnectionManager
 
 def get_session(request: Request) -> GraphSession:
     """Retrieve the GraphSession stored on ``app.state``."""
+    if not hasattr(request.app.state, "session") or request.app.state.session is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GraphSession not initialized."
+        )
     return request.app.state.session
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -77,6 +78,14 @@ def create_app(session: Optional[GraphSession] = None) -> FastAPI:
         return JSONResponse(
             status_code=500,
             content={"detail": f"Internal Server Error: {exc}", "traceback": tb},
+        # Let FastAPI's built-in HTTPException handler take precedence so that
+        # responses from dependency injection (e.g. 503 from get_session) are
+        # not swallowed and converted to 500.
+        if isinstance(exc, HTTPException):
+            raise exc
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error"},
         )
 
     from .routes.graph import router as graph_router
@@ -127,5 +136,9 @@ def create_app(session: Optional[GraphSession] = None) -> FastAPI:
     if static_dir.is_dir():
         from fastapi.staticfiles import StaticFiles
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
     return app

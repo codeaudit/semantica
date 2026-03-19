@@ -5,6 +5,8 @@ Export & import routes.
 import asyncio
 import io
 import json
+import json
+import os
 import tempfile
 from typing import Optional
 
@@ -86,6 +88,7 @@ async def export_graph(
 
     kg = await asyncio.to_thread(_build_kg_dict, session, body.node_ids)
 
+    kg = await asyncio.to_thread(session.build_graph_dict, body.node_ids)
 
     try:
         from ...export.methods import (
@@ -120,6 +123,21 @@ async def export_graph(
 
     except ImportError:
   
+        # Write to a temp file; always clean up even if export or read fails.
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False, mode="w") as tmp:
+                tmp_path = tmp.name
+
+            await asyncio.to_thread(export_fn, kg, tmp_path)
+
+            with open(tmp_path, "r", encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    except ImportError:
         content = json.dumps(kg, indent=2, default=str)
         content_type = "application/json"
         ext = ".json"
@@ -188,6 +206,14 @@ async def import_file(
                     "weight": r.get("weight", 1.0),
                     "properties": r.get("metadata") or r.get("properties") or {},
                 })
+            nodes = data.get("nodes", data.get("entities", []))
+            edges = data.get("edges", data.get("relationships", []))
+
+            for edge in edges:
+                if "source" in edge and "source_id" not in edge:
+                    edge["source_id"] = edge["source"]
+                if "target" in edge and "target_id" not in edge:
+                    edge["target_id"] = edge["target"]
 
             added_nodes = await asyncio.to_thread(session.add_nodes, nodes)
             added_edges = await asyncio.to_thread(session.add_edges, edges)

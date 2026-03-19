@@ -145,6 +145,17 @@ async def find_path(
     )
 
     path_nodes = result.get("path", []) if isinstance(result, dict) else []
+    graph_data = await asyncio.to_thread(session.build_graph_dict)
+
+    # Select algorithm: dijkstra for weighted shortest path, bfs otherwise.
+    if algorithm.lower() == "dijkstra":
+        path_fn = pf.dijkstra_shortest_path
+    else:
+        path_fn = pf.bfs_shortest_path
+
+    result = await asyncio.to_thread(path_fn, graph_data, node_id, target)
+
+    path_nodes = result.get("path", []) if isinstance(result, dict) else (result or [])
     total_weight = result.get("total_weight", 0.0) if isinstance(result, dict) else 0.0
 
     return PathResponse(

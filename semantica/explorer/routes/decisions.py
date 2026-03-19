@@ -150,6 +150,10 @@ async def check_compliance(
     Check policy compliance for a decision.
 
     Returns a stub result when no PolicyEngine is wired up.
+    Inspects edges of type ``violates``, ``non_compliant``, or ``breaches``
+    originating from the decision node.  Returns ``compliant=True`` when no
+    such edges are found, which is the correct result for graphs that have
+    no policy-violation edges defined.
     """
     node = await asyncio.to_thread(session.get_node, decision_id)
     if node is None:
@@ -165,4 +169,25 @@ async def check_compliance(
         decision_id=decision_id,
         compliant=True,
         violations=[],
+    edges, _ = await asyncio.to_thread(session.get_edges, skip=0, limit=999_999)
+
+    _VIOLATION_TYPES = {"violates", "non_compliant", "breaches"}
+    violation_edges = [
+        e for e in edges
+        if e.get("source") == decision_id and e.get("type") in _VIOLATION_TYPES
+    ]
+
+    violations = [
+        {
+            "policy_id": e.get("target"),
+            "type": e.get("type"),
+            "metadata": e.get("metadata", {}),
+        }
+        for e in violation_edges
+    ]
+
+    return ComplianceResponse(
+        decision_id=decision_id,
+        compliant=len(violations) == 0,
+        violations=violations,
     )
