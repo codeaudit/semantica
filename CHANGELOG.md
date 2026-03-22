@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Snapshot Schema Compatibility Fix** (PR #393 by @ZohaibHassan16, reviewed by @KaifAhmad1, follow-up fixes by OpenAI Codex):
+  - Fixed silent snapshot restore failures caused by the `ContextGraph` `nodes`/`edges` schema not matching the version manager's legacy `entities`/`relationships` expectations
+  - Updated temporal snapshot handling to accept both `nodes`/`edges` and `entities`/`relationships`
+  - Preserved both schema shapes in stored snapshots to maintain backward compatibility during migration
+  - Fixed temporal diffing and detailed comparison paths so new-format and mixed-format snapshots compare correctly
+  - Fixed version metadata counts so `entity_count` and `relationship_count` remain accurate for both snapshot schemas
+  - Restored ontology snapshot compatibility fields removed during the PR follow-up iteration
+  - Added regression coverage for new-format snapshot creation, metadata counts, and mixed-schema diffing
+
 - **Context Explainability Output Fixes** (PR pending on `context` by @KaifAhmad1):
   - Fixed decision-node storage in `ContextGraph` so full human-readable `scenario`, `reasoning`, and decision metadata are preserved on graph nodes instead of degrading into opaque IDs or truncated display text
   - Fixed causal and precedent reconstruction paths in the context module so returned `Decision` objects prefer readable stored fields over raw node identifiers
