@@ -127,7 +127,8 @@ class TemporalVersionManager(BaseVersionManager):
         Create and store snapshot with checksum and metadata.
 
         Args:
-            graph: Knowledge graph dict with "nodes"/"edges" (or legacy "entities"/"relationships")
+            graph: Knowledge graph dict with "nodes"/"edges" or
+                legacy "entities"/"relationships"
             version_label: Version string (e.g., "v1.0")
             author: Email address of the change author
             description: Change description (max 500 chars)
@@ -140,31 +141,22 @@ class TemporalVersionManager(BaseVersionManager):
             ValidationError: If input validation fails
             ProcessingError: If storage operation fails
         """
-        from .change_log import ChangeLogEntry
-        from ..utils.exceptions import ValidationError
-
         change_entry = ChangeLogEntry(
             timestamp=datetime.now().isoformat(), author=author, description=description
         )
-
-    
-        valid_keys = {"nodes", "edges", "entities", "relationships"}
-        if not any(key in graph for key in valid_keys):
-            raise ValidationError(
-                "Graph dictionary is missing required schema keys. "
-                "Must contain 'nodes'/'edges' or 'entities'/'relationships'."
-            )
-
-        nodes_data = graph.get("nodes") or graph.get("entities") or []
-        edges_data = graph.get("edges") or graph.get("relationships") or []
+        entities, relationships = self._extract_graph_collections(graph)
 
         snapshot = {
             "label": version_label,
             "timestamp": change_entry.timestamp,
             "author": change_entry.author,
             "description": change_entry.description,
-            "nodes": nodes_data.copy() if nodes_data else [],
-            "edges": edges_data.copy() if edges_data else [],
+            # Store both key shapes during the migration window so older
+            # readers and newer ContextGraph restore paths both work.
+            "nodes": entities.copy(),
+            "edges": relationships.copy(),
+            "entities": entities.copy(),
+            "relationships": relationships.copy(),
             "metadata": options.get("metadata", {}),
         }
 
@@ -172,6 +164,31 @@ class TemporalVersionManager(BaseVersionManager):
         self.storage.save(snapshot)
         self.logger.info(f"Created snapshot '{version_label}' by {author}")
         return snapshot
+
+    def _extract_graph_collections(
+        self, graph: Dict[str, Any]
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Normalize supported graph payload shapes to entities/relationships."""
+        if not isinstance(graph, dict):
+            raise ValidationError("Graph must be provided as a dictionary")
+
+        has_node_schema = "nodes" in graph or "edges" in graph
+        has_legacy_schema = "entities" in graph or "relationships" in graph
+        if not (has_node_schema or has_legacy_schema):
+            raise ValidationError(
+                "Graph dictionary must contain 'nodes'/'edges' or "
+                "'entities'/'relationships'"
+            )
+
+        entities = graph.get("nodes")
+        if entities is None:
+            entities = graph.get("entities", [])
+
+        relationships = graph.get("edges")
+        if relationships is None:
+            relationships = graph.get("relationships", [])
+
+        return list(entities or []), list(relationships or [])
 
     def compare_versions(
         self,
@@ -240,18 +257,25 @@ class TemporalVersionManager(BaseVersionManager):
         Returns:
             Dict with detailed diff information
         """
+        version1_entities, version1_relationships = self._extract_graph_collections(
+            version1
+        )
+        version2_entities, version2_relationships = self._extract_graph_collections(
+            version2
+        )
+
         entities1 = {
-            e.get("id", str(i)): e for i, e in enumerate(version1.get("entities", []))
+            e.get("id", str(i)): e for i, e in enumerate(version1_entities)
         }
         entities2 = {
-            e.get("id", str(i)): e for i, e in enumerate(version2.get("entities", []))
+            e.get("id", str(i)): e for i, e in enumerate(version2_entities)
         }
 
         relationships1 = {
-            self._relationship_key(r): r for r in version1.get("relationships", [])
+            self._relationship_key(r): r for r in version1_relationships
         }
         relationships2 = {
-            self._relationship_key(r): r for r in version2.get("relationships", [])
+            self._relationship_key(r): r for r in version2_relationships
         }
 
         # Entity differences
@@ -438,8 +462,6 @@ class OntologyVersionManager(BaseVersionManager):
         Returns:
             dict: Ontology version snapshot
         """
-        from .change_log import ChangeLogEntry
-        
         change_entry = ChangeLogEntry(
             timestamp=datetime.now().isoformat(), author=author, description=description
         )
@@ -449,14 +471,16 @@ class OntologyVersionManager(BaseVersionManager):
             "timestamp": change_entry.timestamp,
             "author": change_entry.author,
             "description": change_entry.description,
-            "ontology_data": ontology_data,
-            "structure": ontology_data.get("structure", {}), 
+            "ontology_iri": ontology_data.get("uri", ""),
+            "version_info": ontology_data.get("version_info", {}),
+            "structure": ontology_data.get("structure", {}),
             "metadata": options.get("metadata", {}),
         }
-        
+
         snapshot["checksum"] = compute_checksum(snapshot)
         self.storage.save(snapshot)
-        self.logger.info(f"Created snapshot '{version_label}' by {author}")
+        self.versions[version_label] = snapshot
+        self.logger.info(f"Created ontology snapshot '{version_label}' by {author}")
         return snapshot
 
     def compare_versions(
