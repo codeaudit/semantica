@@ -110,6 +110,32 @@ class TestNERConfigurations(unittest.TestCase):
             extractor = NERExtractor(method="ml", model="en_core_web_sm")
 
         self.assertIsNone(extractor.nlp)
+        self.assertFalse(extractor._ml_runtime_usable)
+
+    @patch('semantica.semantic_extract.ner_extractor.spacy')
+    @patch('semantica.semantic_extract.methods.get_entity_method')
+    @patch('semantica.semantic_extract.methods.spacy')
+    def test_ner_ml_runtime_failure_disables_repeated_ml_load_attempts(
+        self,
+        mock_methods_spacy,
+        mock_get_method,
+        mock_init_spacy,
+    ):
+        """Test degraded ML mode skips repeated spaCy load attempts after init failure."""
+        mock_init_spacy.load.side_effect = RuntimeError("ConfigSchemaNlp is not fully defined")
+        mock_ml_method = MagicMock(return_value=[])
+        mock_get_method.side_effect = lambda name: mock_ml_method if name == "ml" else (lambda *_args, **_kwargs: [])
+
+        with patch('semantica.semantic_extract.ner_extractor.SPACY_AVAILABLE', True):
+            extractor = NERExtractor(method=["ml", "pattern"], model="en_core_web_sm")
+
+        entities = extractor.extract_entities(self.text)
+
+        self.assertFalse(extractor._ml_runtime_usable)
+        self.assertEqual(mock_init_spacy.load.call_count, 1)
+        self.assertEqual(mock_methods_spacy.load.call_count, 0)
+        self.assertEqual(mock_ml_method.call_count, 0)
+        self.assertIsInstance(entities, list)
 
     def test_ner_regex_config(self):
         """Test NER with Regex configuration"""

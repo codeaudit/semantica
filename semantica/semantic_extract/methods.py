@@ -685,12 +685,15 @@ def extract_entities_ml(
             return extract_entities_pattern(text, **kwargs)
         except Exception as exc:
             logger.warning(
-                f"spaCy model failed to initialize ({exc}), falling back to pattern extraction"
+                "spaCy fallback triggered because the default model failed to initialize. Falling back to pattern extraction.",
+                exc_info=True,
             )
             return extract_entities_pattern(text, **kwargs)
     except Exception as exc:
         logger.warning(
-            f"spaCy model {model} failed to initialize ({exc}), falling back to pattern extraction"
+            "spaCy model %s failed to initialize, falling back to pattern extraction.",
+            model,
+            exc_info=True,
         )
         return extract_entities_pattern(text, **kwargs)
 
