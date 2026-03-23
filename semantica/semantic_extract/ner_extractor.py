@@ -147,12 +147,20 @@ class NERExtractor:
 
         # Initialize spaCy model if ML method is used
         self.nlp = None
+        self._ml_runtime_usable = True
         if "ml" in self.method and SPACY_AVAILABLE:
             try:
                 self.nlp = spacy.load(self.model_name)
             except OSError:
                 self.logger.warning(
                     f"spaCy model {self.model_name} not found. ML method will fallback."
+                )
+            except Exception as exc:
+                self._ml_runtime_usable = False
+                self.logger.warning(
+                    "spaCy model %s failed to initialize and will be disabled for this extractor instance. ML method will fallback.",
+                    self.model_name,
+                    exc_info=True,
                 )
 
     def extract(self, text: Union[str, List[Dict[str, Any]], List[str]], pipeline_id: Optional[str] = None, **kwargs) -> Union[List[Entity], List[List[Entity]]]:
@@ -342,6 +350,7 @@ class NERExtractor:
             methods = options.get("method", self.method)
             if isinstance(methods, str):
                 methods = [methods]
+            methods = self._filter_unusable_methods(methods)
 
             min_confidence = options.get("min_confidence", self.min_confidence)
             entity_types = options.get("entity_types", self.entity_types)
@@ -456,6 +465,24 @@ class NERExtractor:
                 tracking_id, status="failed", message=str(e)
             )
             raise
+
+    def _filter_unusable_methods(self, methods: List[str]) -> List[str]:
+        """Skip ML dispatch after a known spaCy runtime initialization failure."""
+        filtered = []
+        skipped_ml = False
+
+        for method_name in methods:
+            if method_name in {"ml", "spacy"} and not self._ml_runtime_usable:
+                skipped_ml = True
+                continue
+            filtered.append(method_name)
+
+        if skipped_ml:
+            self.logger.debug(
+                "Skipping ML entity extraction because spaCy runtime initialization previously failed for this extractor."
+            )
+
+        return filtered
 
     def _vote_entities(
         self, results: List[List[Entity]], threshold: float = 0.5

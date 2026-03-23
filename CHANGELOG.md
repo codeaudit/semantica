@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **spaCy Runtime Fallback for NER Benchmarks**:
+    - Hardened `NERExtractor` spaCy initialization so installed-but-broken spaCy environments no longer crash during extractor construction.
+    - Updated ML entity extraction fallback behavior to catch runtime spaCy initialization failures, not just missing-model errors.
+    - Added regression coverage for the "spaCy present but unusable at runtime" initialization path.
 - **Deterministic Temporal Reasoning Engine** (PR #398 by @KaifAhmad1, implemented and follow-up fixes by OpenAI Codex):
   - Added `semantica.kg.temporal_reasoning` as the single source of truth for deterministic, LLM-free temporal reasoning with an explicit zero-LLM module contract
   - Implemented `TemporalInterval`, full Allen interval algebra via `IntervalRelation`, and `TemporalReasoningEngine`

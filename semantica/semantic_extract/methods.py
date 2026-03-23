@@ -683,6 +683,19 @@ def extract_entities_ml(
                 "spaCy model not available, falling back to pattern extraction"
             )
             return extract_entities_pattern(text, **kwargs)
+        except Exception as exc:
+            logger.warning(
+                "spaCy fallback triggered because the default model failed to initialize. Falling back to pattern extraction.",
+                exc_info=True,
+            )
+            return extract_entities_pattern(text, **kwargs)
+    except Exception as exc:
+        logger.warning(
+            "spaCy model %s failed to initialize, falling back to pattern extraction.",
+            model,
+            exc_info=True,
+        )
+        return extract_entities_pattern(text, **kwargs)
 
     doc = nlp(text)
     entities = []
