@@ -873,7 +873,7 @@ class OllamaProvider(BaseProvider):
         try:
             import ollama  # type: ignore[import-untyped]
 
-            self.client = ollama
+            self.client = ollama.Client(host=self.base_url)
             # Test connection
             try:
                 self.client.list()  # Test if Ollama is running

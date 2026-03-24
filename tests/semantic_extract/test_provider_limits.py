@@ -263,6 +263,65 @@ class TestTemperatureParameter:
             options = call_kwargs.get("options", {})
             assert options["temperature"] == 0.3
 
+    def test_ollama_default_base_url_used_as_host(self):
+        """Client must be instantiated with host=base_url (default localhost)."""
+        from semantica.semantic_extract.providers import OllamaProvider
+
+        mock_ollama = MagicMock()
+        mock_client_instance = MagicMock()
+        mock_ollama.Client.return_value = mock_client_instance
+
+        with patch.dict('sys.modules', {'ollama': mock_ollama}):
+            # Reload so _init_client picks up the patched module
+            provider = OllamaProvider.__new__(OllamaProvider)
+            provider.base_url = "http://localhost:11434"
+            provider.model = "llama2"
+            provider.logger = MagicMock()
+            provider.client = None
+            provider._init_client()
+
+        mock_ollama.Client.assert_called_once_with(host="http://localhost:11434")
+        assert provider.client is mock_client_instance
+
+    def test_ollama_custom_base_url_passed_as_host(self):
+        """Client must be instantiated with host set to the custom base_url."""
+        from semantica.semantic_extract.providers import OllamaProvider
+
+        mock_ollama = MagicMock()
+        mock_client_instance = MagicMock()
+        mock_ollama.Client.return_value = mock_client_instance
+
+        with patch.dict('sys.modules', {'ollama': mock_ollama}):
+            provider = OllamaProvider.__new__(OllamaProvider)
+            provider.base_url = "http://192.168.1.3:11434"
+            provider.model = "qwen3.5:9b"
+            provider.logger = MagicMock()
+            provider.client = None
+            provider._init_client()
+
+        mock_ollama.Client.assert_called_once_with(host="http://192.168.1.3:11434")
+        assert provider.client is mock_client_instance
+
+    def test_ollama_module_not_assigned_as_client(self):
+        """Regression: self.client must not be the ollama module itself."""
+        from semantica.semantic_extract.providers import OllamaProvider
+
+        mock_ollama = MagicMock()
+        mock_client_instance = MagicMock()
+        mock_ollama.Client.return_value = mock_client_instance
+
+        with patch.dict('sys.modules', {'ollama': mock_ollama}):
+            provider = OllamaProvider.__new__(OllamaProvider)
+            provider.base_url = "http://localhost:11434"
+            provider.model = "llama2"
+            provider.logger = MagicMock()
+            provider.client = None
+            provider._init_client()
+
+        assert provider.client is not mock_ollama, (
+            "self.client was set to the ollama module instead of ollama.Client(...)"
+        )
+
     def test_deepseek_temperature_none_omitted(self):
         """Verify temperature is NOT in kwargs when None for DeepSeek."""
         from semantica.semantic_extract.providers import DeepSeekProvider
