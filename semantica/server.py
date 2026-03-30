@@ -66,9 +66,8 @@ try:
         export_import,
         graph,
         temporal,
-        vocabulary,
     )
-    
+
     app.include_router(analytics.router)
     app.include_router(annotations.router)
     app.include_router(decisions.router)
@@ -76,8 +75,7 @@ try:
     app.include_router(export_import.router)
     app.include_router(graph.router)
     app.include_router(temporal.router)
-    app.include_router(vocabulary.router)
-    
+
     logging.info("Explorer API routes successfully mounted.")
 
 except ImportError as exc:
@@ -86,6 +84,14 @@ except ImportError as exc:
         f"install the required dependencies: pip install semantica[explorer]. "
         f"Details: {exc}"
     )
+
+# Vocabulary router — mounted separately; available once PR #421 lands
+try:
+    from .explorer.routes import vocabulary
+    app.include_router(vocabulary.router)
+    logging.info("Vocabulary API routes successfully mounted.")
+except ImportError:
+    logging.debug("Vocabulary router not yet available (pending implementation).")
 
 def main():
     """Server entry point."""

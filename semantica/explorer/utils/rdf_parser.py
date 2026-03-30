@@ -43,24 +43,29 @@ def _get_all_labels(graph: rdflib.Graph, subject: rdflib.URIRef, predicate: rdfl
     """ Returns a list of all string values for a predicate, stripping lang tags."""
     return list({str(lbl) for lbl in graph.objects(subject, predicate)})
 
-def parse_skos_file(file_bytes: bytes, format: str = "turtle") -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def parse_skos_file(file_bytes: bytes, rdf_format: str = "turtle") -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Parses RDF data and extracts SKOS concepts and relationships.
-    
+
     Args:
         file_bytes: The raw bytes of the uploaded file.
-        format: The rdflib parse format (e.g., "turtle", "xml").
-    
+        rdf_format: The rdflib parse format (e.g., "turtle" for .ttl, "xml" for .rdf).
+
     Returns:
         A tuple of (nodes_list, edges_list) formatted for ContextGraph ingestion.
+
+    Note:
+        Edges are only emitted when both endpoints exist in the parsed file.
+        Relationships pointing to external URIs not declared as skos:Concept or
+        skos:ConceptScheme (e.g. cross-vocabulary broader links) are silently dropped.
     """
-    
+
     g = rdflib.Graph()
-    
+
     try:
-        g.parse(data=file_bytes, format=format)
+        g.parse(data=file_bytes, format=rdf_format)
     except Exception as e:
-        raise ValueError(f"Failed to parse RDF file as {format}. Ensure the file is valid. Details: {str(e)}")
+        raise ValueError(f"Failed to parse RDF file as {rdf_format}. Ensure the file is valid. Details: {str(e)}") from e
     
     nodes_dict: Dict[str, Dict[str, Any]] = {}
     edges: List[Dict[str, Any]] = []
