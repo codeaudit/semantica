@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Security: CodeQL Alert Remediation** (PR by @KaifAhmad1, branch `security-enhancement`):
+  - **Clear-text logging of sensitive information** (#6, #7 — CWE-312/359/532): Removed debug `print` blocks in `semantica/semantic_extract/relation_extractor.py` and `semantica/semantic_extract/triplet_extractor.py` that accessed and logged `method_options["api_key"]` (even partially masked). No sensitive data is now written to stdout in verbose mode.
+  - **Incomplete URL substring sanitization** (#8 — CWE-20): Replaced `"http://a.com" in urls` in `tests/ingest/test_web_ingestor.py` with `any(url == "http://a.com" for url in urls)` — explicit exact equality per element, eliminating the ambiguous substring check that could match attacker-controlled URLs at arbitrary positions.
+  - **Missing workflow permissions** (#1, #3 — least-privilege): Added `permissions: contents: read` at the workflow level in `.github/workflows/benchmark.yml` and `.github/workflows/security.yml`. Both workflows previously inherited repository-default permissions (potentially read-write); they only require read access to checkout code.
+
 - **SKOS Vocabulary REST API & Hierarchy Engine** (PR #426 by @ZohaibHassan16):
   - Added `semantica/explorer/routes/vocabulary.py` with three endpoints: `GET /api/vocabulary/schemes` returns all `skos:ConceptScheme` nodes as `VocabularyScheme` dicts; `GET /api/vocabulary/hierarchy?scheme=<uri>` returns the full broader/narrower concept tree for a scheme using an O(V+E) in-memory adjacency-list algorithm with cycle detection via a visited set; `POST /api/vocabulary/import` accepts `.ttl`, `.rdf`, and `.owl` uploads, delegates parsing to `rdf_parser.parse_skos_file`, and ingests results into the active `GraphSession` via `add_nodes`/`add_edges`. Invalid files return HTTP 422.
   - Added `VocabularyScheme` and `ConceptNode` Pydantic models to `semantica/explorer/schemas.py`. `ConceptNode` is self-referential (`children: Optional[List['ConceptNode']]`) to support arbitrarily deep hierarchy trees.
