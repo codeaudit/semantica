@@ -53,21 +53,20 @@ async def import_vocabulary(
     parse_format = "xml" if filename.endswith((".rdf", ".owl")) else "turtle"
     
     try:
-       
         nodes, edges = await asyncio.to_thread(parse_skos_file, content, parse_format)
-        
-    
-        added_nodes = await asyncio.to_thread(session.add_nodes, nodes)
-        added_edges = await asyncio.to_thread(session.add_edges, edges)
-        
-        return {
-            "status": "success",
-            "filename": filename,
-            "nodes_added": added_nodes,
-            "edges_added": added_edges
-        }
-    except Exception as exc:
-        return {"status": "error", "detail": str(exc)}
+    except ValueError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    added_nodes = await asyncio.to_thread(session.add_nodes, nodes)
+    added_edges = await asyncio.to_thread(session.add_edges, edges)
+
+    return {
+        "status": "success",
+        "filename": filename,
+        "nodes_added": added_nodes,
+        "edges_added": added_edges,
+    }
 
 
 @router.get("/hierarchy", response_model=List[ConceptNode])
@@ -122,17 +121,21 @@ async def get_hierarchy(
                 parent_to_children[src].append(tgt)
                 has_parent.add(tgt)
 
-    # assemble final nested tree
-    roots = []
-    for nid, node_obj in node_map.items():
-       
-        child_ids = parent_to_children.get(nid, [])
+    # Assemble nested tree — cycle-safe via visited set.
+    def _attach_children(nid: str, visited: set) -> ConceptNode:
+        node_obj = node_map[nid]
+        child_ids = [c for c in parent_to_children.get(nid, []) if c not in visited]
         if child_ids:
-            node_obj.children = [node_map[cid] for cid in child_ids]
+            node_obj.children = [
+                _attach_children(cid, visited | {nid}) for cid in child_ids
+            ]
         else:
-            node_obj.children = None  # indicates a leaf node to the UI
+            node_obj.children = None  # leaf node signal for the UI
+        return node_obj
 
-        if nid not in has_parent:
-            roots.append(node_obj)
-
+    roots = [
+        _attach_children(nid, {nid})
+        for nid in node_map
+        if nid not in has_parent
+    ]
     return roots
