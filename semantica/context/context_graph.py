@@ -405,16 +405,19 @@ class ContextGraph:
         count = 0
         with self._lock:
             for edge in edges:
-                # Accept both "properties" (ContextEdge.to_dict format) and "metadata"
-                # (find_edges / build_graph_dict format) so round-trip imports never
-                # silently drop edge metadata.
                 edge_props = edge.get("properties") or edge.get("metadata", {})
-                # Restore validity windows — ContextEdge.to_dict() writes them at top level
                 valid_from = edge.get("valid_from") or edge_props.get("valid_from")
                 valid_until = edge.get("valid_until") or edge_props.get("valid_until")
+                
+                source_id = edge.get("source_id") or edge.get("source")
+                target_id = edge.get("target_id") or edge.get("target")
+
+                if not source_id or not target_id:
+                    continue
+
                 internal_edge = ContextEdge(
-                    source_id=edge.get("source_id"),
-                    target_id=edge.get("target_id"),
+                    source_id=source_id,
+                    target_id=target_id,
                     edge_type=edge.get("type", "related_to"),
                     weight=edge.get("weight", 1.0),
                     metadata=edge_props,
@@ -792,11 +795,11 @@ class ContextGraph:
             gen = (
                 {
                     "id": n.node_id,
-                    "type": n.node_type,
-                    "content": n.content,
+                    "type": n.node_type or "entity",
+                    "content": n.content or "",
                     "metadata": {**(getattr(n, "metadata", {}) or {}), **(getattr(n, "properties", {}) or {})},
                 }
-                for n in source
+                for n in source if n.node_id
             )
             stop = skip + limit if limit is not None else None
     
@@ -820,11 +823,11 @@ class ContextGraph:
 
             def _active(nodes_iter):
                 for n in nodes_iter:
-                    if n.is_active(now):
+                    if n.node_id and n.is_active(now):
                         yield {
                             "id": n.node_id,
-                            "type": n.node_type,
-                            "content": n.content,
+                            "type": n.node_type or "entity",
+                            "content": n.content or "",
                             "metadata": {
                                 **(getattr(n, "metadata", {}) or {}),
                                 **(getattr(n, "properties", {}) or {}),
@@ -973,13 +976,13 @@ class ContextGraph:
             
             gen = (
                 {
-                    "source": e.source_id,
-                    "target": e.target_id,
-                    "type": e.edge_type,
-                    "weight": e.weight,
-                    "metadata": e.metadata,
+                    "source": e.source_id or "",
+                    "target": e.target_id or "",
+                    "type": e.edge_type or "related_to",
+                    "weight": e.weight if e.weight is not None else 1.0,
+                    "metadata": e.metadata or {},
                 }
-                for e in source
+                for e in source if e.source_id and e.target_id
             )
             stop = skip + limit if limit is not None else None
             return list(itertools.islice(gen, skip, stop))
