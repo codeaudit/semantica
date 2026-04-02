@@ -786,8 +786,12 @@ class ContextGraph:
         """Find nodes lazily"""
         with self._lock:
             if node_type:
-                # Sets are unordered, sort IDs for deterministic pagination
-                raw_ids = sorted(self.node_type_index.get(node_type, set()))
+                # Sets are unordered, sort IDs for deterministic pagination.
+                # Guard against non-string IDs (None/int) which cause sorted() TypeError.
+                raw_ids = sorted(
+                    nid for nid in self.node_type_index.get(node_type, set())
+                    if isinstance(nid, str)
+                )
                 source = (self.nodes[nid] for nid in raw_ids if nid in self.nodes)
             else:
                 source = self.nodes.values()
@@ -816,7 +820,10 @@ class ContextGraph:
         now = at_time or datetime.utcnow()
         with self._lock:
             if node_type:
-                raw_ids = sorted(self.node_type_index.get(node_type, set()))
+                raw_ids = sorted(
+                    nid for nid in self.node_type_index.get(node_type, set())
+                    if isinstance(nid, str)
+                )
                 source = (self.nodes[nid] for nid in raw_ids if nid in self.nodes)
             else:
                 source = self.nodes.values()
@@ -990,11 +997,26 @@ class ContextGraph:
     def stats(self) -> Dict[str, Any]:
         """Get graph statistics."""
         with self._lock:
+            # Count only items that find_nodes/find_edges can return, so pagination
+            # totals reported to callers match what the methods actually yield.
+            node_count = sum(1 for n in self.nodes.values() if n.node_id)
+            edge_count = sum(1 for e in self.edges if e.source_id and e.target_id)
+            node_types = {
+                k: sum(
+                    1 for nid in v
+                    if isinstance(nid, str) and nid in self.nodes and self.nodes[nid].node_id
+                )
+                for k, v in self.node_type_index.items()
+            }
+            edge_types = {
+                k: sum(1 for e in v if e.source_id and e.target_id)
+                for k, v in self.edge_type_index.items()
+            }
             return {
-                "node_count": len(self.nodes),
-                "edge_count": len(self.edges),
-                "node_types": {k: len(v) for k, v in self.node_type_index.items()},
-                "edge_types": {k: len(v) for k, v in self.edge_type_index.items()},
+                "node_count": node_count,
+                "edge_count": edge_count,
+                "node_types": node_types,
+                "edge_types": edge_types,
                 "density": self.density(),
             }
 
